@@ -1,0 +1,154 @@
+# ===========================================================================
+#  biblioteca.prf — tudo escrito na linguagem PRF, nada em Python.
+#
+#  Vocabulário disponível:
+#      Z, Z_n        função zero de aridade 1 (ou n)
+#      S             sucessor
+#      Pi_n          projeção do argumento i entre n
+#      k             literal (açúcar para S aplicado k vezes ao Z)
+#      COMP(f,[g..]) composição
+#      REC(f,g)      recursão primitiva
+#      MINLIM(p,b)   minimização LIMITADA por b
+#
+#  Não existe MIN, WHILE, LOOP, IF-comando, atribuição nem auto-referência.
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# 1. Aritmética
+# ---------------------------------------------------------------------------
+
+# ADD(x,0)   = x                      -> base P1_1
+# ADD(x,y+1) = S(ADD(x,y))            -> passo recebe (x, y, r), usa r = P3_3
+ADD = REC(P1_1, COMP(S, [P3_3]))
+
+# MULT(x,0)   = 0
+# MULT(x,y+1) = ADD(MULT(x,y), x)
+MULT = REC(Z, COMP(ADD, [P3_3, P1_3]))
+
+# POT(x,0)   = 1
+# POT(x,y+1) = MULT(POT(x,y), x)
+POT = REC(1, COMP(MULT, [P3_3, P1_3]))
+
+# FAT(0)   = 1
+# FAT(y+1) = MULT(S(y), FAT(y))       -> sem parâmetro extra: passo recebe (y, r)
+FAT = REC(1, COMP(MULT, [COMP(S, [P1_2]), P2_2]))
+
+# PRED(0)   = 0
+# PRED(y+1) = y
+PRED = REC(0, P1_2)
+
+# SUB(x,y) = x - y truncado em zero ("subtração monus")
+SUB = REC(P1_1, COMP(PRED, [P3_3]))
+
+
+# ---------------------------------------------------------------------------
+# 2. Predicados (0 = falso, 1 = verdadeiro)
+# ---------------------------------------------------------------------------
+
+SG  = REC(0, 1)          # SG(0)=0,  SG(y+1)=1   -> "x != 0"
+NSG = REC(1, 0)          # NSG(0)=1, NSG(y+1)=0  -> "x == 0"
+
+LEQ = COMP(NSG, [SUB])                          # x <= y   <=>  x - y == 0
+GEQ = COMP(LEQ, [P2_2, P1_2])                   # x >= y
+LT  = COMP(LEQ, [COMP(S, [P1_2]), P2_2])        # x <  y   <=>  x+1 <= y
+GT  = COMP(LT, [P2_2, P1_2])                    # x >  y
+EQ  = COMP(MULT, [LEQ, GEQ])                    # x == y
+NEQ = COMP(NSG, [EQ])                           # x != y
+
+E   = MULT                                      # conjunção
+OU  = COMP(SG, [ADD])                           # disjunção
+NAO = NSG                                       # negação
+
+# SE(c,a,b) = a se c!=0, senão b.  É uma FUNÇÃO, não um desvio de fluxo:
+# os dois ramos são sempre avaliados, por isso nenhum deles pode "travar".
+SE = COMP(ADD, [COMP(MULT, [COMP(SG,  [P1_3]), P2_3]),
+                COMP(MULT, [COMP(NSG, [P1_3]), P3_3])])
+
+
+# ---------------------------------------------------------------------------
+# 3. PROBLEMA A — divisão inteira
+#
+#    QUOC(x,y) = mu z <= x [ x < (z+1)*y ]
+#    O teto x é seguro: o quociente de x por y >= 1 nunca passa de x.
+# ---------------------------------------------------------------------------
+
+QUOC = MINLIM(COMP(LT, [P1_3, COMP(MULT, [COMP(S, [P3_3]), P2_3])]), P1_2)
+
+# Convenção: DIV(x,0) = 0 (mantém a função TOTAL — não existe "indefinido")
+DIV = COMP(MULT, [COMP(SG, [P2_2]), QUOC])
+
+# RESTO(x,y) = x - y*DIV(x,y);  RESTO(x,0) = x
+RESTO = COMP(SUB, [P1_2, COMP(MULT, [P2_2, DIV])])
+
+# DIVISOR(d,n) = 1 se d > 0 e d divide n
+DIVISOR = COMP(MULT, [COMP(SG, [P1_2]),
+                      COMP(NSG, [COMP(RESTO, [P2_2, P1_2])])])
+
+
+# ---------------------------------------------------------------------------
+# 4. PROBLEMA B — teste de primalidade
+#
+#    CONTADIV(n,k) = quantos d em 1..k dividem n
+#    NUMDIV(n)     = CONTADIV(n,n) = número de divisores de n
+#    PRIMO(n)      = 1 se n tem exatamente 2 divisores
+# ---------------------------------------------------------------------------
+
+CONTADIV = REC(Z, COMP(ADD, [P3_3, COMP(DIVISOR, [COMP(S, [P2_3]), P1_3])]))
+NUMDIV   = COMP(CONTADIV, [P1_1, P1_1])
+PRIMO    = COMP(EQ, [NUMDIV, 2])
+
+# CONTAPRIMOS(n) = quantos primos existem em 0..n   (a função pi de contagem)
+# CONTAPRIMOS(0) = 0;  CONTAPRIMOS(k+1) = CONTAPRIMOS(k) + PRIMO(k+1)
+CONTAPRIMOS = REC(0, COMP(ADD, [P2_2, COMP(PRIMO, [COMP(S, [P1_2])])]))
+
+
+# ---------------------------------------------------------------------------
+# 5. PROBLEMA C — Fibonacci
+#
+#    F(n+2) = F(n+1) + F(n) precisa de DOIS valores anteriores, e REC só
+#    entrega UM. A saída clássica é carregar o par (F(k), F(k+1)) codificado
+#    num único número, na base B:
+#
+#        z_k = F(k)*B + F(k+1),   com B > F(n+1)
+#
+#    O passo desempacota o par com DIV e RESTO e reempacota deslocado:
+#
+#        z_{k+1} = b*B + (a + b),  onde a = DIV(z,B), b = RESTO(z,B)
+#
+#    Qual B? Serve qualquer B > F(n+1), e 2^n + 1 basta. Mas quanto MAIS
+#    APERTADO o teto, mais barato: o custo do FIB é proporcional a B. Como
+#    F(n+1) ~ phi^n com phi = 1,6180 e 2^0,7 = 1,6245 > phi, usamos
+#
+#        B(n) = 2^teto(0,7*n) + 1,   teto(0,7*n) = piso((7n+9)/10)
+#
+#    que é ~8x menor que 2^n em n = 10 e continua sendo um limite válido.
+# ---------------------------------------------------------------------------
+
+EXPO = COMP(DIV, [COMP(ADD, [COMP(MULT, [7, P1_1]), 9]), 10])
+BASE = COMP(S, [COMP(POT, [2, EXPO])])
+
+# FIBH(B,k) = F(k)*B + F(k+1);  passo recebe (B, k, z)
+FIBH = REC(1, COMP(ADD, [COMP(MULT, [COMP(RESTO, [P3_3, P1_3]), P1_3]),
+                         COMP(ADD,  [COMP(DIV,   [P3_3, P1_3]),
+                                     COMP(RESTO, [P3_3, P1_3])])]))
+
+FIB = COMP(DIV, [COMP(FIBH, [BASE, P1_1]), BASE])
+
+
+# ---------------------------------------------------------------------------
+# 6. Extras — raiz quadrada inteira e soma de divisores
+# ---------------------------------------------------------------------------
+
+# RAIZ(x) = mu y <= x [ (y+1)*(y+1) > x ] = piso da raiz quadrada de x
+RAIZ = MINLIM(COMP(GT, [COMP(MULT, [COMP(S, [P2_2]), COMP(S, [P2_2])]), P1_2]),
+              P1_1)
+
+# SOMADIV(n,k) = soma dos d em 1..k que dividem n
+SOMADIV = REC(Z, COMP(ADD, [P3_3,
+                            COMP(MULT, [COMP(S, [P2_3]),
+                                        COMP(DIVISOR, [COMP(S, [P2_3]), P1_3])])]))
+
+# PERFEITO(n) = 1 se n > 0 e n é a soma dos seus divisores próprios
+PERFEITO = COMP(MULT, [COMP(SG, [P1_1]),
+                       COMP(EQ, [COMP(SOMADIV, [P1_1, COMP(PRED, [P1_1])]), P1_1])])
